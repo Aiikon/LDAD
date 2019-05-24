@@ -58,7 +58,6 @@ Function Get-LDADUser
             throw "One or more input must be provided." }
 
         if (!$Domain) { $Domain = [System.DirectoryServices.ActiveDirectory.Domain]::GetCurrentDomain().Name }
-        if ($Domain -notlike $env:USERDNSDOMAIN -and -not $Credential) { $Credential = Get-WFCredential $Domain Server }
         if (!$Context) { $Context = Get-LDADDefaultContext $Domain $Credential }
 
         $filterList = @()
@@ -245,7 +244,6 @@ Function Get-LDADGroup
         if ($PSCmdlet.MyInvocation.ExpectingInput -and -not $inputCount) { return }
 
         if (!$Domain) { $Domain = [System.DirectoryServices.ActiveDirectory.Domain]::GetCurrentDomain().Name }
-        if ($Domain -notlike $env:USERDNSDOMAIN -and -not $Credential) { $Credential = Get-WFCredential $Domain Server }
         if (!$Context) { $Context = Get-LDADDefaultContext $Domain $Credential }
 
         $properties = 'cn', 'description', 'distinguishedName', 'sAMAccountName'
@@ -466,7 +464,6 @@ Function Get-LDADComputer
         }
 
         if (!$Domain) { $Domain = [System.DirectoryServices.ActiveDirectory.Domain]::GetCurrentDomain().Name }
-        if ($Domain -notlike $env:USERDNSDOMAIN -and -not $Credential) { $Credential = Get-WFCredential $Domain Server }
         if (!$Context) { $Context = Get-LDADDefaultContext $Domain $Credential }
 
         $filterList = @()
@@ -529,7 +526,6 @@ Function Get-LDADContainer
     End
     {
         if (!$Domain) { $Domain = [System.DirectoryServices.ActiveDirectory.Domain]::GetCurrentDomain().Name }
-        if ($Domain -notlike $env:USERDNSDOMAIN -and -not $Credential) { $Credential = Get-WFCredential $Domain Server }
         if (!$Context) { $Context = Get-LDADDefaultContext $Domain $Credential }
 
         $systemOu = "*CN=System,$Context"
@@ -572,7 +568,6 @@ Function Get-LDADDomainController
     End
     {
         if (!$Domain) { $Domain = [System.DirectoryServices.ActiveDirectory.Domain]::GetCurrentDomain().Name }
-        if ($Domain -notlike $env:USERDNSDOMAIN -and -not $Credential) { $Credential = Get-WFCredential $Domain Server }
         if (!$Context) { $Context = Get-LDADDefaultContext $Domain $Credential }
 
         $searcher = Get-LDADSearcher -Domain $Domain -Context $Context -Credential $Credential `
