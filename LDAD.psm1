@@ -1,28 +1,76 @@
 Function Get-LDADObject
 {
+    <#
+    .SYNOPSIS
+    Retrieves LDAP objects.
+
+    .PARAMETER ObjectClass
+    An optional filter for specific object classes, e.g. user.
+
+    .PARAMETER ObjectCategory
+    An optional filter for specific object categories, e.g. person.
+
+    .PARAMETER CN
+    An optional filter for specific object names.
+
+    .PARAMETER DistinguishedName
+    An optional filter for specific distinguished names.
+
+    .PARAMETER SamAccountName
+    An optional filter for specific sAMAccountNames.
+
+    .PARAMETER Properties
+    Object properties to retrieve. Can be a named list or *.
+
+    .PARAMETER Filter
+    Optional custom LDAP filter to use. Combined with other filters.
+
+    .PARAMETER FilterEq
+    Optional hashtable of Key=Value pairs to filter on. Value can be an array. Combined with other filters.
+
+    .PARAMETER Domain
+    A list of domains to query.
+
+    .PARAMETER Context
+    A custom context or OU to search in.
+
+    .PARAMETER ContextName
+    The name of a known context to search in.
+
+    .PARAMETER Credential
+    An alternate credential to use when searching.
+
+    .EXAMPLE
+    Get-LDADObject -ObjectCategory person -Properties SamAccountName, DisplayName, GivenName, SN
+
+    .EXAMPLE
+    Get-LDADObject -FilterEq @{mail='user@domain.com'} -Properties SamAccountName, Mail
+
+    #>
+    [CmdletBinding(PositionalBinding=$false)]
     Param
     (
-        [Parameter()] [string[]] $CN,
-        [Parameter()] [string[]] $DN,
-        [Parameter()] [string[]] $SamAccountName,
         [Parameter()] [string[]] $ObjectClass,
         [Parameter()] [string[]] $ObjectCategory,
+        [Parameter()] [string[]] $CN,
+        [Parameter()] [string[]] $DistinguishedName,
+        [Parameter()] [string[]] $SamAccountName,
         [Parameter()] [string[]] $Properties,
-        [Parameter()] [System.Management.Automation.PSCredential] $Credential,
-        [Parameter()] [hashtable] $FilterEq,
         [Parameter()] [string] $Filter,
+        [Parameter()] [hashtable] $FilterEq,
         [Parameter()] [string[]] $Domain,
         [Parameter()] [string] $Context,
         [Parameter()] [ValidateSet('DefaultNamingContext', 'ConfigurationNamingContext', 'SchemaNamingContext')]
-            [string] $ContextName = 'DefaultNamingContext'
+            [string] $ContextName = 'DefaultNamingContext',
+        [Parameter()] [System.Management.Automation.PSCredential] $Credential
     )
     End
     {
         trap { $PSCmdlet.ThrowTerminatingError($_) }
         if (!!$Domain + !!$Context -gt 1) { throw "Domain and Context can't both be specified." }
-        if (!!$ContextName + !!$Context -gt 1) { throw "ContextName and Context can't both be specified." }
+        if (!!$PSBoundParameters['ContextName'] + !!$Context -gt 1) { throw "ContextName and Context can't both be specified." }
         
-        if ($Context) { $Domain = $Context -replace ".+DC=" -split ",DC=" -join "." }
+        if ($Context) { $Domain = $Context -replace "^.+?DC=" -split ",DC=" -join "." }
         if (!$Domain) { $Domain = [System.DirectoryServices.ActiveDirectory.Domain]::GetCurrentDomain().Name }
 
         foreach ($domainName in $Domain)
@@ -40,7 +88,7 @@ Function Get-LDADObject
                 $Context = $defaultNamingContextEntry.Properties[$ContextName].Value.ToString()
             }
 
-            $ldapBase = "LDAP://$Domain/$Context"
+            $ldapBase = "LDAP://$domainName/$Context"
             if ($Credential)
             {
                 $domainEntry = New-Object System.DirectoryServices.DirectoryEntry $ldapBase, $Credential.UserName, $Credential.GetNetworkCredential().Password
@@ -60,11 +108,13 @@ Function Get-LDADObject
             }
 
             if (!$FilterEq) { $FilterEq = @{} }
+
             if ($ObjectClass) { $FilterEq.ObjectClass = $ObjectClass }
             if ($ObjectCategory) { $FilterEq.ObjectCategory = $ObjectCategory }
             if ($CN) { $FilterEq.CN = $CN }
             if ($SamAccountName) { $FilterEq.SamAccountName = $SamAccountName }
-            if ($DN) { $FilterEq.DistinguishedName = $DistinguishedName }
+            if ($DistinguishedName) { $FilterEq.DistinguishedName = $DistinguishedName }
+
             $filterList = @(
                 if ($Filter) { $Filter }
                 if ($FilterEq)
@@ -75,7 +125,7 @@ Function Get-LDADObject
                         $key = $pair.Key
                         $pairs = foreach ($value in $pair.Value)
                         {
-                            $value = $replacements.Replace($value, '\$1')
+                            if ($key -ne 'DistinguishedName') { $value = $replacements.Replace($value, '\$1') }
                             "($key=$value)"
                         }
                         "(|$($pairs -join ''))"
@@ -83,10 +133,14 @@ Function Get-LDADObject
                 }
             )
 
-            if (!$filterList) { throw "At least one filter value must be provided." }
+            if (!$filterList -and !$PSBoundParameters['Context']) { throw "At least one Filter value or Context must be provided." }
 
-            $searcher.Filter = "(&$($filterList -join ''))"
-            Write-Debug "Filter: $($searcher.Filter)"
+            if ($filterList)
+            {
+                $searcher.Filter = "(&$($filterList -join ''))"
+            }
+
+            Write-Debug "Search Parameters`r`nDomain: $domainName`r`nContext: $Context`r`nFilter: $($searcher.Filter)"
 
             $ouExtract = [regex]"(CN=.+?)(OU=|CN=)"
             foreach ($record in $searcher.FindAll())
@@ -100,7 +154,7 @@ Function Get-LDADObject
                 {
                     if ($p1 -eq '*') { $p1 = $record.Properties.PropertyNames }
                     foreach ($p in $p1)
-                        {
+                    {
                         $value = $record.Properties[$p]
                         if ($value.Count -eq 1) { $value = $value[0] }
                         elseif ($value.Count -eq 0) { $value = $null }
