@@ -1,3 +1,120 @@
+Function Get-LDADObject
+{
+    Param
+    (
+        [Parameter()] [string[]] $CN,
+        [Parameter()] [string[]] $DN,
+        [Parameter()] [string[]] $SamAccountName,
+        [Parameter()] [string[]] $ObjectClass,
+        [Parameter()] [string[]] $ObjectCategory,
+        [Parameter()] [string[]] $Properties,
+        [Parameter()] [System.Management.Automation.PSCredential] $Credential,
+        [Parameter()] [hashtable] $FilterEq,
+        [Parameter()] [string] $Filter,
+        [Parameter()] [string[]] $Domain,
+        [Parameter()] [string] $Context,
+        [Parameter()] [ValidateSet('DefaultNamingContext', 'ConfigurationNamingContext', 'SchemaNamingContext')]
+            [string] $ContextName = 'DefaultNamingContext'
+    )
+    End
+    {
+        trap { $PSCmdlet.ThrowTerminatingError($_) }
+        if (!!$Domain + !!$Context -gt 1) { throw "Domain and Context can't both be specified." }
+        if (!!$ContextName + !!$Context -gt 1) { throw "ContextName and Context can't both be specified." }
+        
+        if ($Context) { $Domain = $Context -replace ".+DC=" -split ",DC=" -join "." }
+        if (!$Domain) { $Domain = [System.DirectoryServices.ActiveDirectory.Domain]::GetCurrentDomain().Name }
+
+        foreach ($domainName in $Domain)
+        {
+            if (!$Context)
+            {
+                if ($Credential)
+                {
+                    $defaultNamingContextEntry = New-Object System.DirectoryServices.DirectoryEntry "LDAP://$domainName/RootDSE", $Credential.UserName, $Credential.GetNetworkCredential().Password
+                }
+                else
+                {
+                    $defaultNamingContextEntry = New-Object System.DirectoryServices.DirectoryEntry "LDAP://$domainName/RootDSE"
+                }
+                $Context = $defaultNamingContextEntry.Properties[$ContextName].Value.ToString()
+            }
+
+            $ldapBase = "LDAP://$Domain/$Context"
+            if ($Credential)
+            {
+                $domainEntry = New-Object System.DirectoryServices.DirectoryEntry $ldapBase, $Credential.UserName, $Credential.GetNetworkCredential().Password
+            }
+            else
+            {
+                $domainEntry = New-Object System.DirectoryServices.DirectoryEntry $ldapBase
+            }
+
+            $searcher = New-Object System.DirectoryServices.DirectorySearcher $domainEntry
+            $searcher.PageSize = 1000
+            [void]$searcher.PropertiesToLoad.Add('cn')
+            [void]$searcher.PropertiesToLoad.Add('distinguishedname')
+            foreach ($p in $Properties)
+            {
+                [void]$searcher.PropertiesToLoad.Add($p)
+            }
+
+            if (!$FilterEq) { $FilterEq = @{} }
+            if ($ObjectClass) { $FilterEq.ObjectClass = $ObjectClass }
+            if ($ObjectCategory) { $FilterEq.ObjectCategory = $ObjectCategory }
+            if ($CN) { $FilterEq.CN = $CN }
+            if ($SamAccountName) { $FilterEq.SamAccountName = $SamAccountName }
+            if ($DN) { $FilterEq.DistinguishedName = $DistinguishedName }
+            $filterList = @(
+                if ($Filter) { $Filter }
+                if ($FilterEq)
+                {
+                    $replacements = [regex]'([,\\\#\+<>;"=])'
+                    foreach ($pair in $FilterEq.GetEnumerator())
+                    {
+                        $key = $pair.Key
+                        $pairs = foreach ($value in $pair.Value)
+                        {
+                            $value = $replacements.Replace($value, '\$1')
+                            "($key=$value)"
+                        }
+                        "(|$($pairs -join ''))"
+                    }
+                }
+            )
+
+            if (!$filterList) { throw "At least one filter value must be provided." }
+
+            $searcher.Filter = "(&$($filterList -join ''))"
+            Write-Debug "Filter: $($searcher.Filter)"
+
+            $ouExtract = [regex]"(CN=.+?)(OU=|CN=)"
+            foreach ($record in $searcher.FindAll())
+            {
+                $result = [ordered]@{}
+                $result.DistinguishedName = $record.Properties['distinguishedname'][0]
+                $result.CN = $record.Properties['cn'][0]
+                $result.OU = $ouExtract.Replace($result.DistinguishedName, '$2')
+
+                foreach ($p1 in $Properties)
+                {
+                    if ($p1 -eq '*') { $p1 = $record.Properties.PropertyNames }
+                    foreach ($p in $p1)
+                        {
+                        $value = $record.Properties[$p]
+                        if ($value.Count -eq 1) { $value = $value[0] }
+                        elseif ($value.Count -eq 0) { $value = $null }
+                        $result[$p] = $value
+                    }
+                }
+
+                $result.Domain = $domainName
+                [pscustomobject]$result
+            }
+        }
+    }
+}
+
 Function Get-LDADUser
 {
     Param
